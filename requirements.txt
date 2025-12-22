@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+pymysql
+strawberry-graphql
+strawberry-fastapi
+python-dotenv
+jose
+pydantic
