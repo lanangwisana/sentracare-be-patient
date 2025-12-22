@@ -1,9 +1,10 @@
+# requirements.txt
 fastapi
 uvicorn[standard]
 sqlalchemy
 pymysql
 strawberry-graphql
-strawberry-fastapi
 python-dotenv
-jose
+python-jose[cryptography]
 pydantic
+email-validator
