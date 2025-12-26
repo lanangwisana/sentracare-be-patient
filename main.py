@@ -1,45 +1,28 @@
-# main.py
-from datetime import date
-from fastapi import FastAPI, Depends, HTTPException
+# sentracare-be-patient/main.py
+from datetime import datetime
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from database import Base, engine, SessionLocal
-from models import Patient, MedicalRecord
-from schemas import (
-    PatientCreate,
-    PatientResponse,
-    MedicalRecordCreate,
-    MedicalRecordResponse,
-    PatientWithRecords,
-)
-from graphql_schema import graphql_app
+from typing import List
+import httpx
+from database import engine, SessionLocal, Base
+from models import MedicalRecord, Patient
+from schemas import PatientWithRecords
 from auth import require_role
+from schemas import MedicalRecordCreate, MedicalRecordResponse
 
-app = FastAPI(
-    title="Sentracare Patient Service",
-    description="API untuk rekam medis elektronik dan data pasien",
-    version="1.0.0",
-)
+Base.metadata.create_all(bind=engine)
 
-# GraphQL router
-app.include_router(graphql_app, prefix="/graphql")
+app = FastAPI()
 
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://0.0.0.0:3000",
-        "http://host.docker.internal:3000",
-    ],
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    allow_headers=["Authorization", "Content-Type", "Accept", "Origin"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
-
-# DB init
-Base.metadata.create_all(bind=engine)
 
 def get_db():
     db = SessionLocal()
@@ -48,112 +31,157 @@ def get_db():
     finally:
         db.close()
 
-# --- REST minimal ---
+# === Endpoint internal untuk menerima push dari Booking Service ===
+@app.post("/patients/internal-register")
+async def internal_register(patient: dict, db: Session = Depends(get_db)):
+    try:
+        existing = db.query(Patient).filter(Patient.booking_id == patient.get("booking_id")).first()
+        if existing:
+            return {"message": "Pasien sudah terdaftar", "patient_id": existing.id}
 
-@app.post("/patients", response_model=PatientResponse, tags=["patients"])
-def create_patient(
-    data: PatientCreate,
-    db: Session = Depends(get_db),
-    _claims: dict = Depends(require_role(["Dokter", "SuperAdmin"]))
-):
-    exists = db.query(Patient).filter(Patient.email == data.email).first()
-    if exists:
-        raise HTTPException(status_code=400, detail="Patient already exists")
-    p = Patient(
-        full_name=data.full_name,
-        email=data.email,
-        phone_number=data.phone_number,
-        status=data.status,
-    )
-    db.add(p)
-    db.commit()
-    db.refresh(p)
-    return p
+        tgl = None
+        if patient.get("tanggal_pemeriksaan"):
+            try:
+                tgl = datetime.strptime(patient.get("tanggal_pemeriksaan"), "%Y-%m-%d").date()
+            except Exception:
+                pass
 
-@app.get("/patients/{patient_id}", response_model=PatientWithRecords, tags=["patients"])
-def get_patient(
-    patient_id: int,
-    db: Session = Depends(get_db),
-    _claims: dict = Depends(require_role(["Dokter", "SuperAdmin"]))
-):
-    p = db.query(Patient).filter(Patient.id == patient_id).first()
-    if not p:
-        raise HTTPException(status_code=404, detail="Patient not found")
-
-    records = [
-        MedicalRecordResponse(
-            id=r.id,
-            patient_id=r.patient_id,
-            doctor_username=r.doctor_username,
-            visit_date=r.visit_date.isoformat(),
-            visit_type=r.visit_type,
-            diagnosis=r.diagnosis,
-            treatment=r.treatment,
-            prescription=r.prescription,
-            vital_signs=r.vital_signs,
-            extended_data=r.extended_data,
-            booking_id=r.booking_id,
-            created_at=r.created_at.isoformat(),
+        new_patient = Patient(
+            full_name=patient.get("full_name"),
+            email=patient.get("email"),
+            phone_number=patient.get("phone_number") or "-",
+            gender=patient.get("gender") or "Laki-laki",
+            age=patient.get("age") or 0,
+            address=patient.get("address") or "-",
+            status="Active",
+            tipe_layanan=patient.get("tipe_layanan"),
+            tanggal_pemeriksaan=tgl,
+            jam_pemeriksaan=patient.get("jam_pemeriksaan"),
+            booking_id=patient.get("booking_id"),
+            doctor_email=patient.get("doctor_email"),
+            doctor_full_name=patient.get("doctor_name"),
         )
-        for r in p.records
-    ]
-    last_visit = max((r.visit_date for r in p.records), default=None)
-    return {
-        "id": p.id,
-        "full_name": p.full_name,
-        "email": p.email,
-        "phone_number": p.phone_number,
-        "status": p.status,
-        "last_visit": last_visit.isoformat() if last_visit else None,
-        "records": records,
-    }
+        db.add(new_patient)
+        db.commit()
+        db.refresh(new_patient)
+        return {"message": "Pasien berhasil diregister", "patient_id": new_patient.id}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/records", response_model=MedicalRecordResponse, tags=["records"])
-def add_record(
-    data: MedicalRecordCreate,
+# === Endpoint untuk list pasien sesuai dokter login ===
+@app.get("/patients", response_model=List[PatientWithRecords])
+def list_patients(
     db: Session = Depends(get_db),
     claims: dict = Depends(require_role(["Dokter", "SuperAdmin"]))
 ):
-    doctor_username = claims.get("sub")
-    if not doctor_username:
-        raise HTTPException(status_code=401, detail="Invalid token: subject missing")
+    query = db.query(Patient)
+    if claims.get("role") == "Dokter":
+        query = query.filter(Patient.doctor_email == claims.get("email"))
+    patients = query.all()
+    return patients
 
-    patient = db.query(Patient).filter(Patient.id == data.patient_id).first()
+# === Endpoint detail pasien berdasarkan email ===
+@app.get("/patients/{email}", response_model=PatientWithRecords)
+def get_patient(
+    email: str,
+    db: Session = Depends(get_db),
+    claims: dict = Depends(require_role(["Dokter", "SuperAdmin"]))
+):
+    query = db.query(Patient)
+    if claims.get("role") == "Dokter":
+        query = query.filter(Patient.doctor_email == claims.get("email"))
+    patient = query.filter(Patient.email == email).first()
     if not patient:
-        raise HTTPException(status_code=404, detail="Patient not found")
+        raise HTTPException(status_code=404, detail="Pasien tidak ditemukan")
+    return patient
 
-    try:
-        visit_date = date.fromisoformat(data.visit_date)
-    except ValueError:
-        raise HTTPException(status_code=422, detail="visit_date must be ISO format YYYY-MM-DD")
+# === Endpoint sinkronisasi fallback dari Booking Service ===
+@app.post("/patients/sync-from-booking")
+async def sync_patients_from_booking(
+    request: Request,
+    db: Session = Depends(get_db),
+    claims: dict = Depends(require_role(["Dokter", "SuperAdmin"]))
+):
+    active_doctor = claims.get("full_name")
+    auth_header = request.headers.get("Authorization")
 
-    r = MedicalRecord(
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                "http://host.docker.internal:8001/api/bookings/emr-patients",
+                headers={"Authorization": auth_header},
+                timeout=10
+            )
+            all_bookings = response.json()
+        except Exception:
+            raise HTTPException(status_code=500, detail="Gagal kontak Booking Service")
+
+    synced_count = 0
+    for b in all_bookings:
+        if b.get("doctorName") == active_doctor or claims.get("role") == "SuperAdmin":
+            existing_entry = db.query(Patient).filter(Patient.booking_id == b.get("id")).first()
+            if not existing_entry:
+                tgl = None
+                if b.get("tanggalPemeriksaan"):
+                    tgl = datetime.strptime(b.get("tanggalPemeriksaan"), "%Y-%m-%d").date()
+                new_patient = Patient(
+                    full_name=b.get("full_name"),
+                    email=b.get("email"),
+                    phone_number=b.get("phone_number") or "-",
+                    gender=b.get("gender") or "Laki-laki",
+                    age=b.get("age") or 0,
+                    address=b.get("alamat") or "-",
+                    status="Active",
+                    tipe_layanan=b.get("tipeLayanan"),
+                    tanggal_pemeriksaan=tgl,
+                    jam_pemeriksaan=b.get("jamPemeriksaan"),
+                    booking_id=b.get("id"),
+                    doctor_email=b.get("doctor_email"),
+                    doctor_full_name=b.get("doctorName"),
+                )
+                db.add(new_patient)
+                synced_count += 1
+
+    db.commit()
+    return {"message": f"Berhasil sinkronisasi {synced_count} antrean pasien"}
+
+@app.post("/records", response_model=MedicalRecordResponse)
+def add_record(
+    data: MedicalRecordCreate, 
+    db: Session = Depends(get_db), 
+    claims: dict = Depends(require_role(["Dokter"]))
+):
+    # Ambil info dokter dari token JWT
+    doctor_username = claims.get("sub")
+    doctor_full_name = claims.get("full_name")
+    
+    new_record = MedicalRecord(
         patient_id=data.patient_id,
         booking_id=data.booking_id,
         doctor_username=doctor_username,
-        visit_date=visit_date,
+        doctor_full_name=doctor_full_name,
+        visit_date=data.visit_date,
         visit_type=data.visit_type,
         diagnosis=data.diagnosis,
         treatment=data.treatment,
         prescription=data.prescription,
         vital_signs=data.vital_signs,
-        extended_data=data.extended_data,
+        extended_data=data.extended_data
     )
-    db.add(r)
+    
+    db.add(new_record)
     db.commit()
-    db.refresh(r)
+    db.refresh(new_record)
+    return new_record
 
-    return MedicalRecordResponse(
-        id=r.id,
-        patient_id=r.patient_id,
-        doctor_username=r.doctor_username,
-        visit_date=r.visit_date.isoformat(),
-        visit_type=r.visit_type,
-        diagnosis=r.diagnosis,
-        treatment=r.treatment,
-        prescription=r.prescription,
-        vital_signs=r.vital_signs,
-        booking_id=r.booking_id,
-        extended_data=r.extended_data,
-        created_at=r.created_at.isoformat(),
-    )
+
+
+
+
+
+
+
+
+
+
