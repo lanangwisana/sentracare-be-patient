@@ -1,56 +1,53 @@
-# schemas.py
-from pydantic import BaseModel, EmailStr
-from typing import Optional, List, Dict, Any
-
-class PatientCreate(BaseModel):
-    full_name: str
-    email: EmailStr
-    phone_number: str
-    status: Optional[str] = "Active"
-
-class PatientResponse(BaseModel):
-    id: int
-    full_name: str
-    email: EmailStr
-    phone_number: str
-    status: Optional[str] = "Active"
-
-    class Config:
-        from_attributes = True
-
-class MedicalRecordCreate(BaseModel):
-    patient_id: int
-    visit_date: str
-    visit_type: str
-    diagnosis: str
-    treatment: str
-    prescription: Optional[str] = None
-    vital_signs: Optional[Dict[str, Any]] = None
-    booking_id: Optional[int] = None
-    extended_data: Optional[Dict[str, Any]] = None
+# sentracare-be-patient/schemas.py
+from datetime import date
+from pydantic import BaseModel, ConfigDict
+from typing import Dict, Optional, List, Any
 
 class MedicalRecordResponse(BaseModel):
     id: int
     patient_id: int
     doctor_username: str
-    visit_date: str
+    doctor_full_name: Optional[str] = None
+    visit_date: Any
+    visit_type: str
+    diagnosis: str
+    treatment: str
+    prescription: Optional[str] = None
+    vital_signs: Optional[Any] = None
+    extended_data: Optional[Any] = None
+    created_at: Any
+
+    model_config = ConfigDict(from_attributes=True)
+
+class PatientWithRecords(BaseModel):
+    id: int
+    full_name: str
+    email: str
+    phone_number: str
+    status: str
+    gender: Optional[str] = None
+    age: Optional[int] = None
+    address: Optional[str] = None
+    tipe_layanan: Optional[str] = None
+    tanggal_pemeriksaan: Optional[Any] = None
+    jam_pemeriksaan: Optional[Any] = None
+    booking_id: Optional[int] = None
+
+    # Tambahan untuk dokter yang di-assign
+    doctor_email: Optional[str] = None
+    doctor_full_name: Optional[str] = None
+
+    records: List[MedicalRecordResponse] = []
+
+    model_config = ConfigDict(from_attributes=True)
+    
+class MedicalRecordCreate(BaseModel):
+    patient_id: int
+    visit_date: date
     visit_type: str
     diagnosis: str
     treatment: str
     prescription: Optional[str] = None
     vital_signs: Optional[Dict[str, Any]] = None
-    booking_id: Optional[int] = None
     extended_data: Optional[Dict[str, Any]] = None
-    created_at: str
-
-    class Config:
-        from_attributes = True
-
-class PatientWithRecords(BaseModel):
-    id: int
-    full_name: str
-    email: EmailStr
-    phone_number: str
-    status: Optional[str] = "Active"
-    last_visit: Optional[str] = None
-    records: List[MedicalRecordResponse]
+    booking_id: Optional[int] = None
