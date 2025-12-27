@@ -51,3 +51,24 @@ class MedicalRecordCreate(BaseModel):
     vital_signs: Optional[Dict[str, Any]] = None
     extended_data: Optional[Dict[str, Any]] = None
     booking_id: Optional[int] = None
+    
+class PrescriptionCreate(BaseModel):
+    patient_id: int
+    record_id: Optional[int] = None
+    medicines: List[dict]   # [{name, dosage, frequency, duration, notes}]
+    instructions: Optional[str] = None
+    prescription_number: Optional[str] = None
+
+class PrescriptionResponse(BaseModel):
+    id: int
+    patient_id: int
+    record_id: Optional[int]
+    doctor_name: str
+    doctor_username: str
+    medicines: List[dict]
+    instructions: Optional[str]
+    prescription_number: Optional[str]
+    created_at: str
+
+    class Config:
+        orm_mode = True
