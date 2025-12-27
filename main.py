@@ -6,10 +6,11 @@ from sqlalchemy.orm import Session
 from typing import List
 import httpx
 from database import engine, SessionLocal, Base
-from models import MedicalRecord, Patient
-from schemas import PatientWithRecords
+from models import MedicalRecord, Patient, Prescription
+from schemas import PatientWithRecords, PrescriptionCreate, PrescriptionResponse
 from auth import require_role
 from schemas import MedicalRecordCreate, MedicalRecordResponse
+from graphql_schema import graphql_app 
 
 Base.metadata.create_all(bind=engine)
 
@@ -30,6 +31,9 @@ def get_db():
         yield db
     finally:
         db.close()
+
+# === Router GraphQL ===
+app.include_router(graphql_app, prefix="/graphql")
 
 # === Endpoint internal untuk menerima push dari Booking Service ===
 @app.post("/patients/internal-register")
@@ -154,7 +158,7 @@ def add_record(
 ):
     # Ambil info dokter dari token JWT
     doctor_username = claims.get("sub")
-    doctor_full_name = claims.get("full_name")
+    doctor_full_name = claims.get("full_name") or claims.get("sub")
     
     new_record = MedicalRecord(
         patient_id=data.patient_id,
@@ -165,7 +169,6 @@ def add_record(
         visit_type=data.visit_type,
         diagnosis=data.diagnosis,
         treatment=data.treatment,
-        prescription=data.prescription,
         vital_signs=data.vital_signs,
         extended_data=data.extended_data
     )
@@ -175,6 +178,38 @@ def add_record(
     db.refresh(new_record)
     return new_record
 
+@app.post("/prescriptions", response_model=PrescriptionResponse)
+def add_prescription(
+    data: PrescriptionCreate,
+    db: Session = Depends(get_db),
+    claims: dict = Depends(require_role(["Dokter"]))
+):
+    doctor_username = claims.get("sub")
+    doctor_full_name = claims.get("full_name") or claims.get("sub")
+
+    new_prescription = Prescription(
+        patient_id=data.patient_id,
+        record_id=data.record_id,
+        doctor_username=doctor_username,
+        doctor_name=doctor_full_name,
+        medicines=data.medicines,
+        instructions=data.instructions,
+        prescription_number=data.prescription_number,
+    )
+
+    db.add(new_prescription)
+    db.commit()
+    db.refresh(new_prescription)
+    return PrescriptionResponse( 
+        id=new_prescription.id, 
+        patient_id=new_prescription.patient_id, 
+        record_id=new_prescription.record_id, 
+        doctor_name=new_prescription.doctor_name, 
+        doctor_username=new_prescription.doctor_username, 
+        medicines=new_prescription.medicines, 
+        instructions=new_prescription.instructions, 
+        prescription_number=new_prescription.prescription_number, 
+        created_at=new_prescription.created_at.isoformat())
 
 
 
