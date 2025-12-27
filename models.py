@@ -40,10 +40,30 @@ class MedicalRecord(Base):
     visit_type = Column(String(50), nullable=False)
     diagnosis = Column(Text, nullable=False)
     treatment = Column(Text, nullable=False)
-    prescription = Column(Text, nullable=True)
     vital_signs = Column(JSON, nullable=True)
     extended_data = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     patient = relationship("Patient", back_populates="records")
+
+class Prescription(Base):
+    __tablename__ = "prescriptions"
+    __table_args__ = {'extend_existing': True}
+
+    id = Column(Integer, primary_key=True, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
+    record_id = Column(Integer, ForeignKey("medical_records.id"), nullable=True)
+    doctor_name = Column(String(100), nullable=False)
+    doctor_username = Column(String(50), nullable=False)
+    medicines = Column(JSON, nullable=False)   # array obat
+    instructions = Column(Text, nullable=True)
+    prescription_number = Column(String(50), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    patient = relationship("Patient", back_populates="prescriptions")
+    record = relationship("MedicalRecord", back_populates="prescriptions")
+
+# Tambahkan relasi di Patient dan MedicalRecord
+Patient.prescriptions = relationship("Prescription", back_populates="patient", cascade="all, delete-orphan")
+MedicalRecord.prescriptions = relationship("Prescription", back_populates="record", cascade="all, delete-orphan")
