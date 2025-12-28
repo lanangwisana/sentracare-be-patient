@@ -14,7 +14,11 @@ from graphql_schema import graphql_app
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI()
+app = FastAPI(
+    title="Sentracare Patient Service",
+    description="API untuk management rekam medis dan resep obat di SentraCare", 
+    version="1.0.0"
+)
 
 # CORS
 app.add_middleware(
@@ -36,45 +40,49 @@ def get_db():
 app.include_router(graphql_app, prefix="/graphql")
 
 # === Endpoint internal untuk menerima push dari Booking Service ===
-@app.post("/patients/internal-register")
-async def internal_register(patient: dict, db: Session = Depends(get_db)):
-    try:
-        existing = db.query(Patient).filter(Patient.booking_id == patient.get("booking_id")).first()
-        if existing:
-            return {"message": "Pasien sudah terdaftar", "patient_id": existing.id}
+# @app.post("/patients/internal-register")
+# async def internal_register(patient: dict, db: Session = Depends(get_db)):
+#     try:
+#         existing = db.query(Patient).filter(Patient.booking_id == patient.get("booking_id")).first()
+#         if existing:
+#             return {"message": "Pasien sudah terdaftar", "patient_id": existing.id}
 
-        tgl = None
-        if patient.get("tanggal_pemeriksaan"):
-            try:
-                tgl = datetime.strptime(patient.get("tanggal_pemeriksaan"), "%Y-%m-%d").date()
-            except Exception:
-                pass
+#         tgl = None
+#         if patient.get("tanggal_pemeriksaan"):
+#             try:
+#                 tgl = datetime.strptime(patient.get("tanggal_pemeriksaan"), "%Y-%m-%d").date()
+#             except Exception:
+#                 pass
 
-        new_patient = Patient(
-            full_name=patient.get("full_name"),
-            email=patient.get("email"),
-            phone_number=patient.get("phone_number") or "-",
-            gender=patient.get("gender") or "Laki-laki",
-            age=patient.get("age") or 0,
-            address=patient.get("address") or "-",
-            status="Active",
-            tipe_layanan=patient.get("tipe_layanan"),
-            tanggal_pemeriksaan=tgl,
-            jam_pemeriksaan=patient.get("jam_pemeriksaan"),
-            booking_id=patient.get("booking_id"),
-            doctor_email=patient.get("doctor_email"),
-            doctor_full_name=patient.get("doctor_name"),
-        )
-        db.add(new_patient)
-        db.commit()
-        db.refresh(new_patient)
-        return {"message": "Pasien berhasil diregister", "patient_id": new_patient.id}
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+#         new_patient = Patient(
+#             full_name=patient.get("full_name"),
+#             email=patient.get("email"),
+#             phone_number=patient.get("phone_number") or "-",
+#             gender=patient.get("gender") or "Laki-laki",
+#             age=patient.get("age") or 0,
+#             address=patient.get("address") or "-",
+#             status="Active",
+#             tipe_layanan=patient.get("tipe_layanan"),
+#             tanggal_pemeriksaan=tgl,
+#             jam_pemeriksaan=patient.get("jam_pemeriksaan"),
+#             booking_id=patient.get("booking_id"),
+#             doctor_email=patient.get("doctor_email"),
+#             doctor_full_name=patient.get("doctor_name"),
+#         )
+#         db.add(new_patient)
+#         db.commit()
+#         db.refresh(new_patient)
+#         return {"message": "Pasien berhasil diregister", "patient_id": new_patient.id}
+#     except Exception as e:
+#         db.rollback()
+#         raise HTTPException(status_code=500, detail=str(e))
 
 # === Endpoint untuk list pasien sesuai dokter login ===
-@app.get("/patients", response_model=List[PatientWithRecords])
+@app.get(
+    "/patients", 
+    description="list pasien sesuai dokter",
+    tags="Patient",
+    response_model=List[PatientWithRecords])
 def list_patients(
     db: Session = Depends(get_db),
     claims: dict = Depends(require_role(["Dokter", "SuperAdmin"]))
@@ -86,22 +94,25 @@ def list_patients(
     return patients
 
 # === Endpoint detail pasien berdasarkan email ===
-@app.get("/patients/{email}", response_model=PatientWithRecords)
-def get_patient(
-    email: str,
-    db: Session = Depends(get_db),
-    claims: dict = Depends(require_role(["Dokter", "SuperAdmin"]))
-):
-    query = db.query(Patient)
-    if claims.get("role") == "Dokter":
-        query = query.filter(Patient.doctor_email == claims.get("email"))
-    patient = query.filter(Patient.email == email).first()
-    if not patient:
-        raise HTTPException(status_code=404, detail="Pasien tidak ditemukan")
-    return patient
+# @app.get("/patients/{email}", response_model=PatientWithRecords)
+# def get_patient(
+#     email: str,
+#     db: Session = Depends(get_db),
+#     claims: dict = Depends(require_role(["Dokter", "SuperAdmin"]))
+# ):
+#     query = db.query(Patient)
+#     if claims.get("role") == "Dokter":
+#         query = query.filter(Patient.doctor_email == claims.get("email"))
+#     patient = query.filter(Patient.email == email).first()
+#     if not patient:
+#         raise HTTPException(status_code=404, detail="Pasien tidak ditemukan")
+#     return patient
 
 # === Endpoint sinkronisasi fallback dari Booking Service ===
-@app.post("/patients/sync-from-booking")
+@app.post(
+    "/patients/sync-from-booking",
+    dependencies="Sinkronisasi dari booking service",
+    tags="Patient")
 async def sync_patients_from_booking(
     request: Request,
     db: Session = Depends(get_db),
@@ -150,7 +161,11 @@ async def sync_patients_from_booking(
     db.commit()
     return {"message": f"Berhasil sinkronisasi {synced_count} antrean pasien"}
 
-@app.post("/records", response_model=MedicalRecordResponse)
+@app.post(
+    "/records",
+    dependencies="membuat medical record sesuai pasien",
+    tags="Medical Record", 
+    response_model=MedicalRecordResponse)
 def add_record(
     data: MedicalRecordCreate, 
     db: Session = Depends(get_db), 
@@ -178,7 +193,11 @@ def add_record(
     db.refresh(new_record)
     return new_record
 
-@app.post("/prescriptions", response_model=PrescriptionResponse)
+@app.post(
+    "/prescriptions", 
+    description="Membuat resep obat berdasarkan pasien",
+    tags="Prescription",
+    response_model=PrescriptionResponse)
 def add_prescription(
     data: PrescriptionCreate,
     db: Session = Depends(get_db),
