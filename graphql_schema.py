@@ -1,11 +1,14 @@
 # sentracare-be-patient/graphql_schema.py
 from datetime import date, datetime
+from multiprocessing.util import info
+from fastapi import Request
 import strawberry
 from typing import List, Optional, Dict, Any
 from strawberry.fastapi import GraphQLRouter
 from sqlalchemy.orm import Session
 from database import SessionLocal
 from models import Patient, MedicalRecord, Prescription
+# from auth import decode_token 
 
 # Definisi JSON Scalar
 JSON = strawberry.scalar( 
@@ -125,7 +128,7 @@ def to_patient_type(p: Patient) -> PatientType:
 class Query:
     @strawberry.field
     def patient_by_email(self, info, email: str) -> Optional[PatientType]:
-        db: Session = info.context["db"]
+        db = info.context["db"]
         p = db.query(Patient).filter(Patient.email == email).first()
         return to_patient_type(p) if p else None
 
@@ -147,10 +150,11 @@ class Mutation:
             return "Success"
         return "Not Found"
 
-schema = strawberry.Schema(query=Query, mutation=Mutation)
-
-async def get_context():
+async def get_context(): 
     db = SessionLocal()
-    return {"db": db}
+    return {
+        "db": db,
+    }
 
+schema = strawberry.Schema(query=Query, mutation=Mutation)
 graphql_app = GraphQLRouter(schema, context_getter=get_context)
