@@ -3,6 +3,7 @@ from datetime import datetime
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from typing import List
 import httpx
 from database import engine, SessionLocal, Base
@@ -21,13 +22,13 @@ app = FastAPI(
 )
 
 # CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["http://localhost:3000"],
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
 
 def get_db():
     db = SessionLocal()
@@ -37,51 +38,58 @@ def get_db():
         db.close()
 
 # === Router GraphQL ===
-app.include_router(graphql_app, prefix="/graphql")
+app.include_router(
+    graphql_app, 
+    prefix="/patients/graphql",
+    tags=["GraphQL"],)
 
 # === Endpoint internal untuk menerima push dari Booking Service ===
-# @app.post("/patients/internal-register")
-# async def internal_register(patient: dict, db: Session = Depends(get_db)):
-#     try:
-#         existing = db.query(Patient).filter(Patient.booking_id == patient.get("booking_id")).first()
-#         if existing:
-#             return {"message": "Pasien sudah terdaftar", "patient_id": existing.id}
+@app.post("/patients/internal-register",
+    tags=["Patient"],
+    summary="Internal Register Pasien",
+    description="Endpoint internal untuk mendaftarkan pasien dari Booking Service")
+async def internal_register(patient: dict, db: Session = Depends(get_db)):
+    try:
+        existing = db.query(Patient).filter(Patient.booking_id == patient.get("booking_id")).first()
+        if existing:
+            return {"message": "Pasien sudah terdaftar", "patient_id": existing.id}
 
-#         tgl = None
-#         if patient.get("tanggal_pemeriksaan"):
-#             try:
-#                 tgl = datetime.strptime(patient.get("tanggal_pemeriksaan"), "%Y-%m-%d").date()
-#             except Exception:
-#                 pass
+        tgl = None
+        if patient.get("tanggal_pemeriksaan"):
+            try:
+                tgl = datetime.strptime(patient.get("tanggal_pemeriksaan"), "%Y-%m-%d").date()
+            except Exception:
+                pass
 
-#         new_patient = Patient(
-#             full_name=patient.get("full_name"),
-#             email=patient.get("email"),
-#             phone_number=patient.get("phone_number") or "-",
-#             gender=patient.get("gender") or "Laki-laki",
-#             age=patient.get("age") or 0,
-#             address=patient.get("address") or "-",
-#             status="Active",
-#             tipe_layanan=patient.get("tipe_layanan"),
-#             tanggal_pemeriksaan=tgl,
-#             jam_pemeriksaan=patient.get("jam_pemeriksaan"),
-#             booking_id=patient.get("booking_id"),
-#             doctor_email=patient.get("doctor_email"),
-#             doctor_full_name=patient.get("doctor_name"),
-#         )
-#         db.add(new_patient)
-#         db.commit()
-#         db.refresh(new_patient)
-#         return {"message": "Pasien berhasil diregister", "patient_id": new_patient.id}
-#     except Exception as e:
-#         db.rollback()
-#         raise HTTPException(status_code=500, detail=str(e))
+        new_patient = Patient(
+            full_name=patient.get("full_name"),
+            email=patient.get("email"),
+            phone_number=patient.get("phone_number") or "-",
+            gender=patient.get("gender") or "Laki-laki",
+            age=patient.get("age") or 0,
+            address=patient.get("address") or "-",
+            status="Active",
+            tipe_layanan=patient.get("tipe_layanan"),
+            tanggal_pemeriksaan=tgl,
+            jam_pemeriksaan=patient.get("jam_pemeriksaan"),
+            booking_id=patient.get("booking_id"),
+            doctor_email=patient.get("doctor_email"),
+            doctor_full_name=patient.get("doctor_name"),
+        )
+        db.add(new_patient)
+        db.commit()
+        db.refresh(new_patient)
+        return {"message": "Pasien berhasil diregister", "patient_id": new_patient.id}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 # === Endpoint untuk list pasien sesuai dokter login ===
 @app.get(
-    "/patients", 
-    description="list pasien sesuai dokter",
-    tags="Patient",
+    "/patients/patients-list", 
+    tags=["Patient"],
+    summary="List Pasien",  
+    description="Mengambil daftar pasien yang terdaftar sesuai dengan dokter yang login",
     response_model=List[PatientWithRecords])
 def list_patients(
     db: Session = Depends(get_db),
@@ -93,26 +101,12 @@ def list_patients(
     patients = query.all()
     return patients
 
-# === Endpoint detail pasien berdasarkan email ===
-# @app.get("/patients/{email}", response_model=PatientWithRecords)
-# def get_patient(
-#     email: str,
-#     db: Session = Depends(get_db),
-#     claims: dict = Depends(require_role(["Dokter", "SuperAdmin"]))
-# ):
-#     query = db.query(Patient)
-#     if claims.get("role") == "Dokter":
-#         query = query.filter(Patient.doctor_email == claims.get("email"))
-#     patient = query.filter(Patient.email == email).first()
-#     if not patient:
-#         raise HTTPException(status_code=404, detail="Pasien tidak ditemukan")
-#     return patient
-
 # === Endpoint sinkronisasi fallback dari Booking Service ===
 @app.post(
     "/patients/sync-from-booking",
-    dependencies="Sinkronisasi dari booking service",
-    tags="Patient")
+    tags=["Patient"],
+    summary="Sinkronisasi Pasien",
+    description="Endpoint untuk sinkronisasi data pasien dari Booking Service")
 async def sync_patients_from_booking(
     request: Request,
     db: Session = Depends(get_db),
@@ -162,16 +156,16 @@ async def sync_patients_from_booking(
     return {"message": f"Berhasil sinkronisasi {synced_count} antrean pasien"}
 
 @app.post(
-    "/records",
-    dependencies="membuat medical record sesuai pasien",
-    tags="Medical Record", 
+    "/patients/records",
+    tags=["Medical Record"], 
+    summary="Tambah Rekam Medis",
+    description="Menambahkan rekam medis baru untuk pasien",
     response_model=MedicalRecordResponse)
 def add_record(
     data: MedicalRecordCreate, 
     db: Session = Depends(get_db), 
     claims: dict = Depends(require_role(["Dokter"]))
 ):
-    # Ambil info dokter dari token JWT
     doctor_username = claims.get("sub")
     doctor_full_name = claims.get("full_name") or claims.get("sub")
     
@@ -189,14 +183,24 @@ def add_record(
     )
     
     db.add(new_record)
+
+    # Update status pasien
+    patient = db.query(Patient).filter(Patient.id == data.patient_id).first()
+    if patient:
+        if hasattr(data, 'status') and data.status:
+            patient.status = data.status
+        else:
+            patient.status = "Control"
+    
     db.commit()
     db.refresh(new_record)
     return new_record
 
 @app.post(
-    "/prescriptions", 
-    description="Membuat resep obat berdasarkan pasien",
-    tags="Prescription",
+    "/patients/prescriptions", 
+    tags=["Prescription"],
+    summary="Tambah atau Update Resep Obat",
+    description="Menambahkan atau memperbarui resep obat untuk pasien. Jika resep dengan nomor yang sama sudah ada, maka akan diperbarui.",
     response_model=PrescriptionResponse)
 def add_prescription(
     data: PrescriptionCreate,
@@ -206,36 +210,49 @@ def add_prescription(
     doctor_username = claims.get("sub")
     doctor_full_name = claims.get("full_name") or claims.get("sub")
 
-    new_prescription = Prescription(
-        patient_id=data.patient_id,
-        record_id=data.record_id,
-        doctor_username=doctor_username,
-        doctor_name=doctor_full_name,
-        medicines=data.medicines,
-        instructions=data.instructions,
-        prescription_number=data.prescription_number,
-    )
+    existing_prescription = db.query(Prescription).filter(
+        or_(
+            Prescription.prescription_number == data.prescription_number,
+            (Prescription.record_id == data.record_id) & (Prescription.record_id != None) & (Prescription.patient_id == data.patient_id)
+        )
+    ).first()
 
-    db.add(new_prescription)
-    db.commit()
-    db.refresh(new_prescription)
+    if existing_prescription:
+
+        existing_prescription.medicines = data.medicines
+        existing_prescription.instructions = data.instructions
+        existing_prescription.doctor_username = doctor_username
+        existing_prescription.doctor_name = doctor_full_name
+
+        if data.record_id:
+            existing_prescription.record_id = data.record_id
+            
+        db.commit()
+        db.refresh(existing_prescription)
+        target = existing_prescription
+    else:
+        # Jika benar-benar baru, lakukan INSERT
+        new_prescription = Prescription(
+            patient_id=data.patient_id,
+            record_id=data.record_id,
+            doctor_username=doctor_username,
+            doctor_name=doctor_full_name,
+            medicines=data.medicines,
+            instructions=data.instructions,
+            prescription_number=data.prescription_number,
+        )
+        db.add(new_prescription)
+        db.commit()
+        db.refresh(new_prescription)
+        target = new_prescription
+
     return PrescriptionResponse( 
-        id=new_prescription.id, 
-        patient_id=new_prescription.patient_id, 
-        record_id=new_prescription.record_id, 
-        doctor_name=new_prescription.doctor_name, 
-        doctor_username=new_prescription.doctor_username, 
-        medicines=new_prescription.medicines, 
-        instructions=new_prescription.instructions, 
-        prescription_number=new_prescription.prescription_number, 
-        created_at=new_prescription.created_at.isoformat())
-
-
-
-
-
-
-
-
-
-
+        id=target.id, 
+        patient_id=target.patient_id, 
+        record_id=target.record_id, 
+        doctor_name=target.doctor_name, 
+        doctor_username=target.doctor_username, 
+        medicines=target.medicines, 
+        instructions=target.instructions, 
+        prescription_number=target.prescription_number, 
+        created_at=target.created_at.isoformat())
