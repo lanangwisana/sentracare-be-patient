@@ -47,6 +47,7 @@ class MedicalRecordCreate(BaseModel):
     visit_type: str
     diagnosis: str
     treatment: str
+    status: Optional[str] = None # Tambahkan ini
     prescription: Optional[str] = None
     vital_signs: Optional[Dict[str, Any]] = None
     extended_data: Optional[Dict[str, Any]] = None
